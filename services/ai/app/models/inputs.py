@@ -14,5 +14,6 @@ class AnalyzeRequest(BaseModel):
     ifc_file_path: str
     design_inputs: DesignInputs
     user_id: str | None = None
+    request_id: str | None = None
 
 

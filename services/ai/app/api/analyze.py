@@ -1,5 +1,6 @@
 import os
 import time
+import json
 from fastapi import APIRouter
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
@@ -17,7 +18,42 @@ router = APIRouter()
 @router.post("/analyze")
 async def analyze(req: AnalyzeRequest):
     started = time.time()
+    request_id = getattr(req, 'request_id', None) or f"ai_{int(started)}_{hash(str(req)) % 10000}"
+    
+    def log_ai(level: str, message: str, details: dict = None):
+        duration = time.time() - started
+        log_entry = {
+            "level": level,
+            "request_id": request_id,
+            "message": message,
+            "details": {**(details or {}), "duration": duration},
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.%fZ", time.gmtime())
+        }
+        print(json.dumps(log_entry))
+    
+    log_ai("info", "AI service analysis started", {
+        "project_id": req.project_id,
+        "ifc_path": req.ifc_file_path,
+        "pynite_available": PYNITE_AVAILABLE
+    })
+    
     # Try a tiny PyNite model if available (beam with two supports and uniform loads)
+    if PYNITE_AVAILABLE:
+        try:
+            log_ai("info", "Running PyNite analysis");
+            # Simple beam analysis
+            model = FEModel3D()
+            model.add_node('N1', 0, 0, 0)
+            model.add_node('N2', 5, 0, 0)
+            model.add_member('M1', 'N1', 'N2', E=29000*1000, G=11200*1000, Iy=1000, Iz=1000, J=1000, A=100)
+            model.add_member_dist_load('M1', 'Fy', -req.design_inputs.live_load, -req.design_inputs.live_load, 0, 5)
+            model.def_support('N1', True, True, True, True, True, True)
+            model.def_support('N2', True, True, True, True, True, True)
+            model.analyze()
+            log_ai("info", "PyNite analysis completed successfully");
+        except Exception as e:
+            log_ai("warn", "PyNite analysis failed, using mock data", {"error": str(e)});
+    
     results = {
         "project_id": req.project_id,
         "analysis_summary": {"max_displacement_mm": 12.3, "max_moment_kNm": 45.6},
@@ -70,8 +106,14 @@ async def analyze(req: AnalyzeRequest):
         pass
 
     duration = time.time() - started
+    log_ai("info", "Analysis completed", {
+        "duration": duration,
+        "element_count": len(results.get("elements", [])),
+        "overall_compliance": results.get("overall_compliance")
+    });
 
     # Generate a minimal PDF report in-memory
+    log_ai("info", "Generating PDF report");
     buffer = BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
@@ -93,6 +135,11 @@ async def analyze(req: AnalyzeRequest):
     # Return report bytes as base64 for Edge Function to store in Supabase Storage
     import base64
     report_b64 = base64.b64encode(pdf_bytes).decode("ascii")
+    
+    log_ai("info", "AI service response ready", {
+        "total_duration": time.time() - started,
+        "pdf_size_bytes": len(pdf_bytes)
+    });
 
     return {
         "success": True,

@@ -10,18 +10,52 @@ serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
+  
+  const startTime = Date.now();
+  let requestId: string;
+  
   try {
     const payload = await req.json()
+    requestId = payload.request_id || crypto.randomUUID();
     const aiUrl = Deno.env.get('AI_SERVICE_URL') || 'http://127.0.0.1:8000/analyze'
     const shared = Deno.env.get('EDGE_SHARED_SECRET') || ''
+    
+    const log = (level: string, message: string, details?: any) => {
+      const duration = Date.now() - startTime;
+      const logEntry = { 
+        level, 
+        requestId, 
+        message, 
+        details: { ...details, duration }, 
+        timestamp: new Date().toISOString() 
+      };
+      console.log(JSON.stringify(logEntry));
+    };
+    
+    log('info', 'Edge Function request received', { 
+      projectId: payload.project_id, 
+      ifcPath: payload.ifc_file_path 
+    });
+    const aiStartTime = Date.now();
+    log('info', 'Calling AI service', { aiUrl });
+    
     const res = await fetch(aiUrl, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
         'x-shared-secret': shared,
+        'x-request-id': requestId, // Pass request ID to AI service
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ ...payload, request_id: requestId })
     })
+    
+    const aiDuration = Date.now() - aiStartTime;
+    log('info', 'AI service response received', { 
+      status: res.status, 
+      aiDuration,
+      success: res.ok 
+    });
+    
     const data = await res.json()
 
     // Optional: store generated PDF report into Storage 'reports' bucket
@@ -150,12 +184,34 @@ serve(async (req) => {
           project_id: payload.project_id,
           log_level: 'INFO',
           message: 'Analysis completed',
-          details: { analysis_id: data.analysis_id, duration_s: data.analysis_duration_seconds }
+          details: { 
+            requestId,
+            analysis_id: data.analysis_id, 
+            duration_s: data.analysis_duration_seconds,
+            edge_function_duration: Date.now() - startTime
+          }
         })
       })
     } catch {}
+    log('info', 'Edge Function completed successfully', { 
+      totalDuration: Date.now() - startTime,
+      analysisId: data.analysis_id 
+    });
+    
     return new Response(JSON.stringify({ success: true, analysis_id: data.analysis_id }), { headers: { 'content-type': 'application/json', ...corsHeaders } })
   } catch (e) {
+    const errorDuration = Date.now() - startTime;
+    console.error(JSON.stringify({
+      level: 'error',
+      requestId: requestId || 'unknown',
+      message: 'Edge Function error',
+      details: { 
+        error: String(e?.message || e),
+        duration: errorDuration 
+      },
+      timestamp: new Date().toISOString()
+    }));
+    
     return new Response(
       JSON.stringify({ success: false, error: String(e?.message || e) }),
       { status: 500, headers: { 'content-type': 'application/json', ...corsHeaders } }
