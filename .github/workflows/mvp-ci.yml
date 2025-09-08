@@ -1,0 +1,30 @@
+name: mvp-ci
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  web-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install root deps
+        run: npm install
+      - name: Install web deps
+        run: cd apps/web && npm ci
+      - name: Build web
+        run: cd apps/web && npm run build --if-present
+
+  ai-docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build AI Docker image
+        run: docker build -t cobble-ai:ci ./services/ai
+
