@@ -18,6 +18,9 @@ jobs:
       - name: Install deps (workspaces)
         run: npm ci
       - name: Build web (workspace)
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: http://localhost:54321
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: dev-placeholder
         run: npm run build --workspace=web --if-present
 
   ai-docker-build:
@@ -27,5 +30,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Build AI Docker image
-        run: docker build -t cobble-ai:ci ./services/ai
+        run: |
+          docker build --pull --no-cache -t cobble-ai:ci ./services/ai
 
